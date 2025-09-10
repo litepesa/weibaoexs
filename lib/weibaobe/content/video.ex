@@ -27,10 +27,20 @@ defmodule Weibaobe.Content.Video do
 
     timestamps(type: :utc_datetime)
 
-    # Associations
-    belongs_to :user, Weibaobe.Accounts.User, foreign_key: :user_id, references: :uid, type: :string
-    has_many :comments, Weibaobe.Content.Comment, foreign_key: :video_id, references: :id
-    has_many :video_likes, Weibaobe.Content.VideoLike, foreign_key: :video_id, references: :id
+    # Associations (using full module paths to avoid circular dependencies)
+    belongs_to :user, Weibaobe.Accounts.User,
+               foreign_key: :user_id,
+               references: :uid,
+               type: :string,
+               define_field: false
+
+    has_many :comments, Weibaobe.Content.Comment,
+             foreign_key: :video_id,
+             references: :id
+
+    has_many :video_likes, Weibaobe.Content.VideoLike,
+             foreign_key: :video_id,
+             references: :id
   end
 
   @doc false

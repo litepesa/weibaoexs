@@ -3,16 +3,7 @@ defmodule Weibaobe.Services.FirebaseAuth do
   Firebase Authentication service for verifying ID tokens
   """
 
-  use Tesla
-  import Joken
-
   require Logger
-
-  @firebase_base_url "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com"
-
-  plug Tesla.Middleware.BaseUrl, "https://securetoken.google.com/v1/token"
-  plug Tesla.Middleware.JSON
-  plug Tesla.Middleware.Retry, delay: 500, max_retries: 3
 
   @doc """
   Verifies a Firebase ID token and returns the token claims
@@ -29,24 +20,26 @@ defmodule Weibaobe.Services.FirebaseAuth do
   end
 
   @doc """
-  Gets Firebase user information by UID
+  Gets Firebase user information by UID using Goth token
   """
   def get_user(uid) do
     with {:ok, token} <- get_admin_token(),
          {:ok, project_id} <- get_project_id() do
 
-      url = "https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=#{get_api_key()}"
+      # Use Tesla for HTTP request
+      client = Tesla.client([
+        Tesla.Middleware.BaseURL,
+        Tesla.Middleware.JSON,
+        {Tesla.Middleware.Headers, [{"authorization", "Bearer #{token}"}]}
+      ])
+
+      url = "https://identitytoolkit.googleapis.com/v1/accounts:lookup"
 
       body = %{
         "localId" => [uid]
       }
 
-      headers = [
-        {"Authorization", "Bearer #{token}"},
-        {"Content-Type", "application/json"}
-      ]
-
-      case Tesla.post(url, body, headers: headers) do
+      case Tesla.post(client, url, body) do
         {:ok, %Tesla.Env{status: 200, body: %{"users" => [user]}}} ->
           {:ok, normalize_user(user)}
 
@@ -67,19 +60,21 @@ defmodule Weibaobe.Services.FirebaseAuth do
   end
 
   @doc """
-  Decodes and verifies Firebase ID token
+  Decodes and verifies Firebase ID token using Joken
   """
   defp decode_token(id_token, project_id) do
     with {:ok, keys} <- get_firebase_keys(),
          {:ok, header} <- peek_header(id_token),
          {:ok, key} <- find_key(keys, header["kid"]),
-         {:ok, claims} <- verify_and_validate(id_token, key, project_id) do
+         {:ok, claims} <- verify_with_joken(id_token, key, project_id) do
       {:ok, claims}
     end
   end
 
   defp get_firebase_keys do
-    case Tesla.get(@firebase_base_url) do
+    url = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com"
+
+    case Tesla.get(url) do
       {:ok, %Tesla.Env{status: 200, body: keys}} when is_map(keys) ->
         {:ok, keys}
 
@@ -101,41 +96,47 @@ defmodule Weibaobe.Services.FirebaseAuth do
   end
   defp find_key(_, _), do: {:error, :invalid_kid}
 
-  defp verify_and_validate(token, public_key, project_id) do
-    signer = create_signer(public_key)
+  defp verify_with_joken(token, public_key_pem, project_id) do
+    try do
+      signer = Joken.Signer.create("RS256", %{"pem" => public_key_pem})
 
-    with {:ok, claims} <- verify_and_validate(token, signer, %{
-           "iss" => "https://securetoken.google.com/#{project_id}",
-           "aud" => project_id
-         }) do
+      # Basic token verification
+      case Joken.verify(token, signer) do
+        {:ok, claims} ->
+          # Additional Firebase-specific validations
+          now = System.system_time(:second)
 
-      # Additional Firebase-specific validations
-      now = System.system_time(:second)
+          cond do
+            claims["exp"] <= now ->
+              {:error, :token_expired}
 
-      cond do
-        claims["exp"] <= now ->
-          {:error, :token_expired}
+            claims["iat"] > now ->
+              {:error, :token_used_too_early}
 
-        claims["iat"] > now ->
-          {:error, :token_used_too_early}
+            claims["iss"] != "https://securetoken.google.com/#{project_id}" ->
+              {:error, :invalid_issuer}
 
-        claims["auth_time"] > now ->
-          {:error, :invalid_auth_time}
+            claims["aud"] != project_id ->
+              {:error, :invalid_audience}
 
-        not is_binary(claims["sub"]) or String.length(claims["sub"]) == 0 ->
-          {:error, :invalid_subject}
+            not is_binary(claims["sub"]) or String.length(claims["sub"]) == 0 ->
+              {:error, :invalid_subject}
 
-        String.length(claims["sub"]) > 128 ->
-          {:error, :subject_too_long}
+            String.length(claims["sub"]) > 128 ->
+              {:error, :subject_too_long}
 
-        true ->
-          {:ok, normalize_claims(claims)}
+            true ->
+              {:ok, normalize_claims(claims)}
+          end
+
+        {:error, reason} ->
+          {:error, reason}
       end
+    rescue
+      error ->
+        Logger.error("Token verification error: #{inspect(error)}")
+        {:error, :verification_failed}
     end
-  end
-
-  defp create_signer(public_key_pem) do
-    Joken.Signer.create("RS256", %{"pem" => public_key_pem})
   end
 
   defp normalize_claims(claims) do
@@ -192,11 +193,6 @@ defmodule Weibaobe.Services.FirebaseAuth do
     end
   end
 
-  defp get_api_key do
-    # In production, you should set this as an environment variable
-    System.get_env("FIREBASE_WEB_API_KEY") || ""
-  end
-
   @doc """
   Extracts header from JWT token without verification
   """
@@ -222,8 +218,12 @@ defmodule Weibaobe.Services.FirebaseAuth do
   """
   def health_check do
     with {:ok, _project_id} <- get_project_id(),
-         {:ok, keys} <- get_firebase_keys() when is_map(keys) do
-      {:ok, :healthy}
+         {:ok, keys} <- get_firebase_keys() do
+      if is_map(keys) do
+        {:ok, :healthy}
+      else
+        {:error, :invalid_keys_format}
+      end
     else
       error -> {:error, error}
     end
