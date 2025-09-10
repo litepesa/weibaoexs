@@ -25,6 +25,9 @@ config :weibaobe, WeibaobeWeb.Endpoint,
 # Configures the mailer
 config :weibaobe, Weibaobe.Mailer, adapter: Swoosh.Adapters.Local
 
+# Configure esbuild (the version your project was generated with)
+config :esbuild, :version, "0.25.0"
+
 # Configures Elixir's Logger
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
