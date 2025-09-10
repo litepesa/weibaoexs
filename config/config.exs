@@ -23,12 +23,6 @@ config :weibaobe, WeibaobeWeb.Endpoint,
   live_view: [signing_salt: "QKy9UjZW"]
 
 # Configures the mailer
-#
-# By default it uses the "Local" adapter which stores the emails
-# locally. You can see the emails in your browser, at "/dev/mailbox".
-#
-# For production it's recommended to configure a different adapter
-# at the `config/runtime.exs`.
 config :weibaobe, Weibaobe.Mailer, adapter: Swoosh.Adapters.Local
 
 # Configures Elixir's Logger
@@ -38,6 +32,45 @@ config :logger, :default_formatter,
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
+
+# Firebase Configuration
+config :goth,
+  json: {:system, "FIREBASE_CREDENTIALS_JSON"}
+
+config :weibaobe, :firebase,
+  project_id: {:system, "FIREBASE_PROJECT_ID"}
+
+# Cloudflare R2 Configuration (S3-compatible)
+config :ex_aws,
+  access_key_id: {:system, "R2_ACCESS_KEY"},
+  secret_access_key: {:system, "R2_SECRET_KEY"},
+  region: "auto",
+  json_codec: Jason
+
+config :ex_aws, :s3,
+  scheme: "https://",
+  region: "auto"
+
+config :weibaobe, :r2,
+  account_id: {:system, "R2_ACCOUNT_ID"},
+  bucket_name: {:system, "R2_BUCKET_NAME"},
+  public_url: {:system, "R2_PUBLIC_URL"}
+
+# CORS Configuration
+config :cors_plug,
+  origin: [
+    "http://localhost:3000",
+    "https://yourdomain.com"
+  ],
+  max_age: 86400,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+
+# JWT Configuration for Firebase tokens
+config :joken,
+  default_signer: "HS256"
+
+# Tesla HTTP client configuration
+config :tesla, adapter: Tesla.Adapter.Hackney
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
